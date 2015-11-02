@@ -194,6 +194,8 @@ public class SerialMonitor extends ViewPart implements ISerialUser {
 	mySendPostFix.getControl().setLayoutData(theGriddata);
 	mySendPostFix.setContentProvider(new ArrayContentProvider());
 	mySendPostFix.setLabelProvider(new LabelProvider());
+	// TODO remove the comment line below
+	// just add a line to make jenkins publis
 	mySendPostFix.setInput(Common.listLineEndings());
 	mySendPostFix.getCombo().select(ArduinoInstancePreferences.GetLastUsedSerialLineEnd());
 
@@ -516,7 +518,7 @@ public class SerialMonitor extends ViewPart implements ISerialUser {
     public void ResumePort(String PortName) {
 	Serial TheSerial = GetSerial(PortName);
 	if (TheSerial != null) {
-	    TheSerial.connect();
+	    TheSerial.connect(5);
 	}
     }
 

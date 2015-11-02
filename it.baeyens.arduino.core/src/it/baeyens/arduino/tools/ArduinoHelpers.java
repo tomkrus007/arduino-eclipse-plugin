@@ -8,11 +8,15 @@ import java.io.BufferedReader;
 import java.io.DataInputStream;
 import java.io.File;
 import java.io.FileInputStream;
+import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.net.URI;
 import java.util.ArrayList;
+import java.util.Calendar;
+import java.util.Date;
+import java.util.GregorianCalendar;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
@@ -53,7 +57,6 @@ import org.eclipse.core.runtime.CoreException;
 import org.eclipse.core.runtime.IPath;
 import org.eclipse.core.runtime.IProgressMonitor;
 import org.eclipse.core.runtime.IStatus;
-import org.eclipse.core.runtime.NullProgressMonitor;
 import org.eclipse.core.runtime.Path;
 import org.eclipse.core.runtime.Platform;
 import org.eclipse.core.runtime.Status;
@@ -69,6 +72,11 @@ import org.eclipse.ui.console.MessageConsole;
  * 
  */
 public class ArduinoHelpers extends Common {
+
+    private static final String BUILD_PATH_SYSCALLS_SAM3 = "\"{build.path}/syscalls_sam3.c.o\"";
+    private static final String BUILD_PATH_ARDUINO_SYSCALLS_SAM3 = "\"{build.path}/arduino/syscalls_sam3.c.o\"";
+    private static final String BUILD_PATH_SYSCALLS_MTK = "\"{build.path}/syscalls_mtk.c.o\"";
+    private static final String BUILD_PATH_ARDUINO_SYSCALLS_MTK = "\"{build.path}/arduino/syscalls_mtk.c.o\"";
 
     /**
      * This method is the internal working class that adds the provided includepath to all configurations and languages.
@@ -94,7 +102,9 @@ public class ArduinoHelpers extends Common {
 		    ICLanguageSettingEntry[] IncludeEntries = new ICLanguageSettingEntry[OrgIncludeEntries.length + 1];
 		    System.arraycopy(OrgIncludeEntries, 0, IncludeEntries, 0, OrgIncludeEntries.length);
 		    IncludeEntries[OrgIncludeEntries.length] = new CIncludePathEntry(IncludePath, ICSettingEntry.VALUE_WORKSPACE_PATH); // (location.toString());
+
 		    lang.setSettingEntries(ICSettingEntry.INCLUDE_PATH, IncludeEntries);
+
 		}
 	    }
 	}
@@ -126,6 +136,8 @@ public class ArduinoHelpers extends Common {
 			if ((ResourcesPlugin.getWorkspace().getRoot().exists(cusPath))
 				|| (((CIncludePathEntry) OrgIncludeEntries[curEntry]).isBuiltIn())) {
 			    OrgIncludeEntries[copiedEntry++] = OrgIncludeEntries[curEntry];
+			} else {
+			    Common.log(new Status(IStatus.WARNING, ArduinoConst.CORE_PLUGIN_ID, "Removed invalid include path" + cusPath, null));
 			}
 		    }
 		    if (copiedEntry != OrgIncludeEntries.length) // do not save
@@ -136,6 +148,7 @@ public class ArduinoHelpers extends Common {
 			System.arraycopy(OrgIncludeEntries, 0, IncludeEntries, 0, copiedEntry);
 			lang.setSettingEntries(ICSettingEntry.INCLUDE_PATH, IncludeEntries);
 			hasChange = true;
+
 		    }
 		}
 	    }
@@ -303,9 +316,7 @@ public class ArduinoHelpers extends Common {
      *            The project where the natures need to be added to
      * @throws CoreException
      */
-    public static void addTheNatures(IProject project) throws CoreException {
-	IProjectDescription description = project.getDescription();
-
+    public static void addTheNatures(IProjectDescription description) throws CoreException {
 	String[] newnatures = new String[5];
 	newnatures[0] = ArduinoConst.Cnatureid;
 	newnatures[1] = ArduinoConst.CCnatureid;
@@ -313,7 +324,7 @@ public class ArduinoHelpers extends Common {
 	newnatures[3] = ArduinoConst.Scannernatureid;
 	newnatures[4] = ArduinoConst.ArduinoNatureID;
 	description.setNatureIds(newnatures);
-	project.setDescription(description, new NullProgressMonitor());
+
     }
 
     /**
@@ -348,36 +359,23 @@ public class ArduinoHelpers extends Common {
      * Paths are given relative to the arduino folder to avoid conflict when a version control system is being used (these values are in the .project
      * file) As the arduino folder location is in the workspace all values in the .project file become relative avoiding conflict.
      * 
+     * If core or variant are of the type [vendor ID]:[core ID] then we reroute
+     * 
      * @param project
      */
-    public static void setProjectPathVariables(IProject project, IPath platformPath) {
-	IPath PinPath = platformPath.append(ArduinoConst.VARIANTS_FOLDER);
+    public static void setProjectPathVariables(ICConfigurationDescription configurationDescription) {
+	IPath variantPath = new Path(Common.getBuildEnvironmentVariable(configurationDescription, ArduinoConst.ENV_KEY_build_variant_path, ""));
+	IPath corePath = new Path(Common.getBuildEnvironmentVariable(configurationDescription, ArduinoConst.ENV_KEY_build_core_path, ""));
+	IPath platformPath = new Path(Common.getBuildEnvironmentVariable(configurationDescription, ArduinoConst.ENV_KEY_PLATFORM_PATH, ""));
+
 	IPath arduinoHardwareLibraryPath = platformPath.append(ArduinoConst.LIBRARY_PATH_SUFFIX);
-	IPathVariableManager pathMan = project.getPathVariableManager();
+	IPathVariableManager pathMan = configurationDescription.getProjectDescription().getProject().getPathVariableManager();
 	try {
-	    // TODO the code below was changed for issue #34 (better multiple user support) but fails on Mac
-	    // So i split it to use the old code on mac.
-	    // but they should be merged
-	    // then it turned out nothing worked anymore. So I reverted to the old code
-	    // Path arduinoPath = new Path(pathMan.getURIValue(ArduinoConst.WORKSPACE_PATH_VARIABLE_NAME_ARDUINO).getRawPath());
-	    // if (Platform.getOS().equals(Platform.OS_MACOSX)) {
 	    pathMan.setURIValue(ArduinoConst.WORKSPACE_PATH_VARIABLE_NAME_HARDWARE_LIB, URIUtil.toURI(arduinoHardwareLibraryPath));
-	    pathMan.setURIValue(ArduinoConst.PATH_VARIABLE_NAME_ARDUINO_PLATFORM, URIUtil.toURI(platformPath));
-	    pathMan.setURIValue(ArduinoConst.PATH_VARIABLE_NAME_ARDUINO_PINS, URIUtil.toURI(PinPath));
-	    // } else {
-	    //
-	    // String prefix = "${" + ArduinoConst.WORKSPACE_PATH_VARIABLE_NAME_ARDUINO + "}/";
-	    // String test = prefix + arduinoHardwareLibraryPath.makeRelativeTo(arduinoPath).toString();
-	    // // URI uriTest = URIUtil.toURI(test, false);
-	    //
-	    // pathMan.setURIValue(ArduinoConst.WORKSPACE_PATH_VARIABLE_NAME_HARDWARE_LIB, pathMan.getURIValue(test));
-	    // test = prefix + platformPath.makeRelativeTo(arduinoPath).toString();
-	    // // uriTest = URIUtil.toURI(test, false);
-	    // pathMan.setURIValue(ArduinoConst.PATH_VARIABLE_NAME_ARDUINO_PLATFORM, pathMan.getURIValue(test));
-	    // test = prefix + PinPath.makeRelativeTo(arduinoPath).toString();
-	    // URI uriTest = URIUtil.toURI(pathMan.convertFromUserEditableFormat(test, true));
-	    // pathMan.setURIValue(ArduinoConst.PATH_VARIABLE_NAME_ARDUINO_PINS, uriTest);
-	    // }
+	    pathMan.setURIValue(ArduinoConst.PATH_VARIABLE_NAME_ARDUINO_PLATFORM, URIUtil.toURI(corePath.removeLastSegments(1)));
+	    pathMan.setURIValue(ArduinoConst.PATH_VARIABLE_NAME_ARDUINO_PINS, URIUtil.toURI(variantPath.removeLastSegments(1)));
+	    // pathMan.setURIValue("ArduinoPivateLibPath", URIUtil.toURI("${" + ArduinoConst.WORKSPACE_PATH_VARIABLE_NAME_PRIVATE_LIB + "}"));
+
 	} catch (CoreException e) {
 	    Common.log(new Status(IStatus.ERROR, ArduinoConst.CORE_PLUGIN_ID,
 		    "Failed to create the path variable variables. The setup will not work properly", e));
@@ -432,11 +430,11 @@ public class ArduinoHelpers extends Common {
     public static void addArduinoCodeToProject(IProject project, ICConfigurationDescription configurationDescription) throws CoreException {
 
 	String boardVariant = getBuildEnvironmentVariable(configurationDescription, ENV_KEY_build_variant, "");
-	String buildCoreFolder = getBuildEnvironmentVariable(configurationDescription, ENV_KEY_build_core_folder, "");
+	String buildCoreFolder = getBuildEnvironmentVariable(configurationDescription, ENV_KEY_build_core, "");
 	if (buildCoreFolder.contains(":")) {
 	    String sections[] = buildCoreFolder.split(":");
 	    if (sections.length != 2) {
-		Common.log(new Status(IStatus.ERROR, ArduinoConst.CORE_PLUGIN_ID, "the value for key " + ENV_KEY_build_core_folder
+		Common.log(new Status(IStatus.ERROR, ArduinoConst.CORE_PLUGIN_ID, "the value for key " + ENV_KEY_build_core
 			+ " in boards.txt is invalid:" + buildCoreFolder, null));
 	    } else {
 		String architecture = getBuildEnvironmentVariable(configurationDescription, ENV_KEY_ARCHITECTURE, "");
@@ -444,8 +442,7 @@ public class ArduinoHelpers extends Common {
 			+ "/" + ARDUINO_CORE_FOLDER_NAME + "/" + sections[1], "arduino/core", configurationDescription);
 	    }
 	} else {
-	    addCodeFolder(project, PATH_VARIABLE_NAME_ARDUINO_PLATFORM, ARDUINO_CORE_FOLDER_NAME + "/" + buildCoreFolder, "arduino/core",
-		    configurationDescription);
+	    addCodeFolder(project, PATH_VARIABLE_NAME_ARDUINO_PLATFORM, buildCoreFolder, "arduino/core", configurationDescription);
 	}
 	if (!boardVariant.equals("")) {
 	    ArduinoHelpers.addCodeFolder(project, PATH_VARIABLE_NAME_ARDUINO_PINS, boardVariant, "arduino/variant", configurationDescription);
@@ -516,135 +513,125 @@ public class ArduinoHelpers extends Common {
 	    IPath platformFile) {
 	// Set some default values because the platform.txt does not contain
 	// them
-	IEnvironmentVariable var = new EnvironmentVariable(ENV_KEY_ARDUINO_PATH, getArduinoPath().toString());
-	contribEnv.addVariable(var, confDesc);
+	setBuildEnvironmentVariable(contribEnv, confDesc, ENV_KEY_ARDUINO_PATH, getArduinoPath().toString());
 
-	// from 1.5.3 onwards 3 more environment variables need to be added
-	var = new EnvironmentVariable(ENV_KEY_ARCHITECTURE, platformFile.removeLastSegments(1).lastSegment());
-	contribEnv.addVariable(var, confDesc);
-	var = new EnvironmentVariable(ENV_KEY_BUILD_ARCH, platformFile.removeLastSegments(1).lastSegment().toUpperCase());
-	contribEnv.addVariable(var, confDesc);
-	var = new EnvironmentVariable(ENV_KEY_HARDWARE_PATH, platformFile.removeLastSegments(3).toString());
-	contribEnv.addVariable(var, confDesc);
+	String architecture = platformFile.removeLastSegments(1).lastSegment();
+	if (architecture.contains(".")) {
+	    architecture = platformFile.removeLastSegments(2).lastSegment();
+	}
+	String buildVariantPath = makeEnvironmentVar(ENV_KEY_PLATFORM_PATH) + "/variants/";
+
+	setBuildEnvironmentVariable(contribEnv, confDesc, ENV_KEY_ARCHITECTURE, architecture.toUpperCase());
+	setBuildEnvironmentVariable(contribEnv, confDesc, ENV_KEY_BUILD_ARCH, architecture.toUpperCase());
+	// from 1.6.2 the hardware path can also contain a version number
+	// TOFIX test with boardmanager and without board manager
+	setBuildEnvironmentVariable(contribEnv, confDesc, ENV_KEY_HARDWARE_PATH, platformFile.removeLastSegments(3).toString());
 
 	// from 1.5.8 onward 1 more environment variable is needed
-	var = new EnvironmentVariable(ENV_KEY_PLATFORM_PATH, platformFile.removeLastSegments(1).toString());
-	contribEnv.addVariable(var, confDesc);
+	setBuildEnvironmentVariable(contribEnv, confDesc, ENV_KEY_PLATFORM_PATH, platformFile.removeLastSegments(1).toString());
+	// Teensy uses build.core.path
+	setBuildEnvironmentVariable(contribEnv, confDesc, ENV_KEY_build_core_path, makeEnvironmentVar(ENV_KEY_PLATFORM_PATH) + "/cores/"
+		+ makeEnvironmentVar(ENV_KEY_build_core));
+	setBuildEnvironmentVariable(contribEnv, confDesc, ENV_KEY_build_variant_path, buildVariantPath + makeEnvironmentVar(ENV_KEY_build_variant));
 
-	// I'm not sure why but till now arduino refused to put this in the platform.txt file
-	// I won't call them idiots for this but it is getting close
-	var = new EnvironmentVariable(ENV_KEY_SOFTWARE, "ARDUINO");
-	contribEnv.addVariable(var, confDesc);
-	var = new EnvironmentVariable(ENV_KEY_runtime_ide_version, GetARDUINODefineValue());
-	contribEnv.addVariable(var, confDesc);
-	// End of section permitting denigrating remarks on arduino software development team
-
-	// // Arduino uses the board approach for the upload tool.
-	// // as I'm not I create some special entries to work around it
-	// var = new EnvironmentVariable("A.CMD", makeEnvironmentVar("A.TOOLS.BOSSAC.CMD"));
-	// contribEnv.addVariable(var, confDesc);
-	// var = new EnvironmentVariable("A.PATH", makeEnvironmentVar("A.TOOLS.BOSSAC.PATH"));
-	// contribEnv.addVariable(var, confDesc);
-	// var = new EnvironmentVariable("A.CMD.PATH", makeEnvironmentVar("A.TOOLS.AVRDUDE.CMD.PATH"));
-	// contribEnv.addVariable(var, confDesc);
-	// var = new EnvironmentVariable("A.CONFIG.PATH", makeEnvironmentVar("A.TOOLS.AVRDUDE.CONFIG.PATH"));
-	// contribEnv.addVariable(var, confDesc); // End of section Arduino uses
-	// // the board approach for the
-	// // upload tool.
+	setBuildEnvironmentVariable(contribEnv, confDesc, ENV_KEY_SOFTWARE, "ARDUINO");
+	setBuildEnvironmentVariable(contribEnv, confDesc, ENV_KEY_runtime_ide_version, GetArduinoDefineValue());
+	// for the due from arduino IDE 1.6.1 onwards link the due bin builder to the hex binder
+	setBuildEnvironmentVariable(contribEnv, confDesc, "A.RECIPE.OBJCOPY.HEX.PATTERN", "${A.RECIPE.OBJCOPY.BIN.PATTERN}");
 
 	// For Teensy I added a flag that allows to compile everything in one
 	// project not using the archiving functionality
 	// I set the default value to: use the archiver
-	var = new EnvironmentVariable(ENV_KEY_use_archiver, "true");
-	contribEnv.addVariable(var, confDesc);
+	setBuildEnvironmentVariable(contribEnv, confDesc, ENV_KEY_use_archiver, "true");
+
+	// Build Time
+	Date d = new Date();
+	GregorianCalendar cal = new GregorianCalendar();
+	long current = d.getTime() / 1000;
+	long timezone = cal.get(Calendar.ZONE_OFFSET) / 1000;
+	long daylight = cal.get(Calendar.DST_OFFSET) / 1000;
+	// p.put("extra.time.utc", Long.toString(current));
+	setBuildEnvironmentVariable(contribEnv, confDesc, "A.EXTRA.TIME.UTC", Long.toString(current));
+	setBuildEnvironmentVariable(contribEnv, confDesc, "A.EXTRA.TIME.LOCAL", Long.toString(current + timezone + daylight));
+	setBuildEnvironmentVariable(contribEnv, confDesc, "A.EXTRA.TIME.ZONE", Long.toString(timezone));
+	setBuildEnvironmentVariable(contribEnv, confDesc, "A.EXTRA.TIME.DTS", Long.toString(daylight));
 	// End of Teensy specific settings
 
-	if (platformFile.segment(platformFile.segmentCount() - 2).equals("avr")) {
-	    var = new EnvironmentVariable(ENV_KEY_compiler_path, makeEnvironmentVar("A.RUNTIME.IDE.PATH") + "/hardware/tools/avr/bin/");
-	    contribEnv.addVariable(var, confDesc);
-	} else if (platformFile.segment(platformFile.segmentCount() - 2).equals("sam")) {
-	    var = new EnvironmentVariable(ENV_KEY_build_system_path, makeEnvironmentVar("A.RUNTIME.IDE.PATH") + "/hardware/arduino/sam/system");
-	    contribEnv.addVariable(var, confDesc);
-	    var = new EnvironmentVariable(ENV_KEY_build_generic_path, makeEnvironmentVar("A.RUNTIME.IDE.PATH")
-		    + "/hardware/tools/g++_arm_none_eabi/arm-none-eabi/bin");
-	    contribEnv.addVariable(var, confDesc);
+	if (architecture.equals("avr")) {
+	    setBuildEnvironmentVariable(contribEnv, confDesc, ENV_KEY_compiler_path, makeEnvironmentVar(ENV_KEY_HARDWARE_PATH) + "/tools/avr/bin/");
+	} else if (architecture.equals("sam") || architecture.equals("mtk")) {
+	    setBuildEnvironmentVariable(contribEnv, confDesc, ENV_KEY_build_system_path, makeEnvironmentVar(ENV_KEY_PLATFORM_PATH) + "/system");
+	    setBuildEnvironmentVariable(contribEnv, confDesc, ENV_KEY_build_generic_path, makeEnvironmentVar(ENV_KEY_HARDWARE_PATH)
+		    + "/tools/g++_arm_none_eabi/arm-none-eabi/bin");
 	}
 
 	// some glue to make it work
 	String extraPathForOS = "";
-	if (Platform.getOS().equals(Platform.OS_WIN32)) {
-	    extraPathForOS = "${PathDelimiter}${" + ENV_KEY_ARDUINO_PATH + "}/hardware/tools/avr/utils/bin";
+	if (Platform.getWS().equals(Platform.WS_WIN32)) {
+	    extraPathForOS = makeEnvironmentVar("PathDelimiter") + makeEnvironmentVar(ENV_KEY_ARDUINO_PATH) + "/hardware/tools/avr/utils/bin"
+		    + makeEnvironmentVar("PathDelimiter") + makeEnvironmentVar(ENV_KEY_ARDUINO_PATH);
 	}
-	var = new EnvironmentVariable("PATH", "${A.COMPILER.PATH}${PathDelimiter}${" + ENV_KEY_build_generic_path + "}" + extraPathForOS
-		+ "${PathDelimiter}${PATH}");
-	contribEnv.addVariable(var, confDesc);
+	setBuildEnvironmentVariable(contribEnv, confDesc, "PATH", makeEnvironmentVar(ENV_KEY_compiler_path) + makeEnvironmentVar("PathDelimiter")
+		+ makeEnvironmentVar(ENV_KEY_build_generic_path) + extraPathForOS + makeEnvironmentVar("PathDelimiter") + makeEnvironmentVar("PATH"));
 
-	var = new EnvironmentVariable(ENV_KEY_build_path, "${ProjDirPath}/${ConfigName}");
-	contribEnv.addVariable(var, confDesc);
+	setBuildEnvironmentVariable(contribEnv, confDesc, ENV_KEY_build_path, makeEnvironmentVar("ProjDirPath") + "/"
+		+ makeEnvironmentVar("ConfigName"));
 
-	var = new EnvironmentVariable(ENV_KEY_build_project_name, makeEnvironmentVar("ProjName"));
-	contribEnv.addVariable(var, confDesc);
+	setBuildEnvironmentVariable(contribEnv, confDesc, ENV_KEY_build_project_name, makeEnvironmentVar("ProjName"));
 
 	// if (firstTime) {
 	if (getBuildEnvironmentVariable(confDesc, ENV_KEY_JANTJE_SIZE_SWITCH, "").isEmpty()) {
-	    var = new EnvironmentVariable(ENV_KEY_JANTJE_SIZE_SWITCH, makeEnvironmentVar(ENV_KEY_recipe_size_pattern));
-	    contribEnv.addVariable(var, confDesc);
+	    setBuildEnvironmentVariable(contribEnv, confDesc, ENV_KEY_JANTJE_SIZE_SWITCH, makeEnvironmentVar(ENV_KEY_recipe_size_pattern));
 	}
 	if (getBuildEnvironmentVariable(confDesc, ENV_KEY_JANTJE_SIZE_COMMAND, "").isEmpty()) {
-	    var = new EnvironmentVariable(ENV_KEY_JANTJE_SIZE_COMMAND, JANTJE_SIZE_COMMAND);
-	    contribEnv.addVariable(var, confDesc);
+	    setBuildEnvironmentVariable(contribEnv, confDesc, ENV_KEY_JANTJE_SIZE_COMMAND, JANTJE_SIZE_COMMAND);
 	}
 
 	// Set the warning level default off like arduino does
 	if (getBuildEnvironmentVariable(confDesc, ENV_KEY_JANTJE_WARNING_LEVEL, "").isEmpty()) {
-	    var = new EnvironmentVariable(ENV_KEY_JANTJE_WARNING_LEVEL, ENV_KEY_WARNING_LEVEL_OFF);
-	    contribEnv.addVariable(var, confDesc);
+	    setBuildEnvironmentVariable(contribEnv, confDesc, ENV_KEY_JANTJE_WARNING_LEVEL, ENV_KEY_WARNING_LEVEL_OFF);
 	}
-
-	var = new EnvironmentVariable(ENV_KEY_archive_file, "arduino.ar");
-	contribEnv.addVariable(var, confDesc);
-
-	IPathVariableManager pathMan = confDesc.getProjectDescription().getProject().getPathVariableManager();
-	URI buildVariantURI = pathMan.getURIValue(ArduinoConst.PATH_VARIABLE_NAME_ARDUINO_PINS);
-	buildVariantURI = pathMan.resolveURI(buildVariantURI);
-	String buildVariantPath = buildVariantURI.getPath() + "/${" + ArduinoConst.ENV_KEY_build_variant + "}";
-	var = new EnvironmentVariable(ENV_KEY_build_variant_path, buildVariantPath);
-	contribEnv.addVariable(var, confDesc);
-	// IPath platformPath = new Path(arduinoProperties.getPlatformFolder());
-	// IPath PinPath = platformPath.append(ArduinoConst.VARIANTS_FOLDER);
+	setBuildEnvironmentVariable(contribEnv, confDesc, ENV_KEY_archive_file, "arduino.ar");
 
     }
 
     /**
-     * This method parses the platform.txt file for values to be added to the environment variables
+     * This method parses a file with environment variables like the platform.txt file for values to be added to the environment variables
      * 
      * @param contribEnv
      * @param confDesc
-     * @param platformFile
+     * @param envVarFile
      *            The file to parse
-     * @throws IOException
      */
-    private static void setTheEnvironmentVariablesAddthePlatformTxt(IContributedEnvironment contribEnv, ICConfigurationDescription confDesc,
-	    IPath platformFile) throws IOException {
-	DataInputStream dataInputStream = new DataInputStream(new FileInputStream(platformFile.toOSString()));
-	BufferedReader br = new BufferedReader(new InputStreamReader(dataInputStream));
-	String strLine;
-	IEnvironmentVariable var = null;
-	// Read File Line By Line
-	while ((strLine = br.readLine()) != null) {
-	    String RealData[] = strLine.split("#");// Ignore everything after
-						   // first #
-	    if (RealData.length > 0) {
-		String Var[] = RealData[0].split("=", 2); // look for assignment
-		if (Var.length == 2) {
-		    String Value = MakeEnvironmentString(Var[1].replace("\"{build.path}/syscalls_sam3.c.o\"",
-			    "\"{build.path}/arduino/syscalls_sam3.c.o\""));
-		    var = new EnvironmentVariable(MakeKeyString(Var[0]), Value);
-		    contribEnv.addVariable(var, confDesc);
+    private static void setTheEnvironmentVariablesAddAFile(IContributedEnvironment contribEnv, ICConfigurationDescription confDesc, IPath envVarFile) {
+	try (DataInputStream dataInputStream = new DataInputStream(new FileInputStream(envVarFile.toOSString()));
+		BufferedReader br = new BufferedReader(new InputStreamReader(dataInputStream));) {
+	    String strLine;
+
+	    // Read File Line By Line
+	    while ((strLine = br.readLine()) != null) {
+		String realData[] = strLine.split("#");// Ignore everything after
+						       // first #
+		if (realData.length > 0) {
+		    String var[] = realData[0].split("=", 2); // look for assignment
+		    if (var.length == 2) {
+			String value = var[1];
+			if (value.contains(BUILD_PATH_SYSCALLS_SAM3)) {
+			    value = value.replace(BUILD_PATH_SYSCALLS_SAM3, BUILD_PATH_ARDUINO_SYSCALLS_SAM3);
+			} else if (value.contains(BUILD_PATH_SYSCALLS_MTK)) {
+			    value = value.replace(BUILD_PATH_SYSCALLS_MTK, BUILD_PATH_ARDUINO_SYSCALLS_MTK);
+			}
+			IEnvironmentVariable envVar = new EnvironmentVariable(MakeKeyString(var[0]), MakeEnvironmentString(value,
+				ArduinoConst.ENV_KEY_ARDUINO_START));
+			contribEnv.addVariable(envVar, confDesc);
+		    }
 		}
 	    }
+	} catch (FileNotFoundException e) {
+	    Common.log(new Status(IStatus.ERROR, ArduinoConst.CORE_PLUGIN_ID, "Error parsing " + envVarFile.toString() + " file does not exist. ", e));
+	} catch (IOException e) {
+	    Common.log(new Status(IStatus.ERROR, ArduinoConst.CORE_PLUGIN_ID, "Error parsing " + envVarFile.toString() + " I/O exception. ", e));
 	}
-	dataInputStream.close(); // Close the platform.txt
     }
 
     /**
@@ -656,20 +643,25 @@ public class ArduinoHelpers extends Common {
      * @param confDesc
      * @param platformFilename
      *            The file to parse
-     * @throws IOException
      */
     private static void setTheEnvironmentVariablesAddtheBoardsTxt(IContributedEnvironment contribEnv, ICConfigurationDescription confDesc,
-	    IPath boardFileName, String boardName) throws IOException {
-	ArduinoBoards boardsFile = new ArduinoBoards(boardFileName.toOSString());
-	String boardID = boardsFile.getBoardIDFromName(boardName);
+	    ArduinoBoards boardsFile, String boardID, boolean warn) {
 
 	// Get the boards section and add all entries to the environment variables
 	Map<String, String> boardSectionMap = boardsFile.getSection(boardID);
+	if (boardSectionMap == null) {
+	    if (warn) {
+		Common.log(new Status(IStatus.WARNING, ArduinoConst.CORE_PLUGIN_ID, "The project "
+			+ confDesc.getProjectDescription().getProject().getName() + " Has an invalid arduino board configuration."));
+
+	    }
+	    return;
+	}
 	for (Entry<String, String> currentPair : boardSectionMap.entrySet()) {
 	    // if it is not a menu item add it
 	    if (!currentPair.getKey().startsWith("menu.")) {
 		String keyString = MakeKeyString(currentPair.getKey());
-		String valueString = MakeEnvironmentString(currentPair.getValue());
+		String valueString = MakeEnvironmentString(currentPair.getValue(), ArduinoConst.ENV_KEY_ARDUINO_START);
 		contribEnv.addVariable(new EnvironmentVariable(keyString, valueString), confDesc);
 	    } else {
 
@@ -681,7 +673,7 @@ public class ArduinoHelpers extends Common {
 		    String StartValue = "menu." + menuID + "." + menuItemID + ".";
 		    if (currentPair.getKey().startsWith(StartValue)) {
 			String keyString = MakeKeyString(currentPair.getKey().substring(StartValue.length()));
-			String valueString = MakeEnvironmentString(currentPair.getValue());
+			String valueString = MakeEnvironmentString(currentPair.getValue(), ArduinoConst.ENV_KEY_ARDUINO_START);
 			contribEnv.addVariable(new EnvironmentVariable(keyString, valueString), confDesc);
 		    }
 		}
@@ -723,8 +715,9 @@ public class ArduinoHelpers extends Common {
 		    for (Entry<String, String> curOption : menuSectionMap.entrySet()) {
 			if (curOption.getKey().startsWith(keyStartsWithValue)) {
 			    String key = curOption.getKey().substring(keyStartsWithValue.length());
-			    contribEnv
-				    .addVariable(new EnvironmentVariable(MakeKeyString(key), MakeEnvironmentString(curOption.getValue())), confDesc);
+			    contribEnv.addVariable(
+				    new EnvironmentVariable(MakeKeyString(key), MakeEnvironmentString(curOption.getValue(),
+					    ArduinoConst.ENV_KEY_ARDUINO_START)), confDesc);
 			}
 		    }
 
@@ -751,10 +744,15 @@ public class ArduinoHelpers extends Common {
     }
 
     /**
-     * This method creates environment variables based on the platform.txt and boards.txt platform.txt is processed first and then boards.txt. This
+     * This method creates environment variables based on the platform.txt and boards.txt. platform.txt is processed first and then boards.txt. This
      * way boards.txt settings can overwrite common settings in platform.txt The environment variables are only valid for the project given as
      * parameter The project properties are used to identify the boards.txt and platform.txt as well as the board id to select the settings in the
      * board.txt file At the end also the path variable is set
+     * 
+     * from arduino IDE 1.6.5 an additional file generated by the arduino ide is processed. This is the first file processed.
+     * 
+     * To be able to quickly fix boards.txt and pmatform.txt problems I also added a arduino_eclipse_plugin.txt that is processed as a boards.txt file
+     * and is processed after the arduino delivered boards.txt file.
      * 
      * @param project
      *            the project for which the environment variables are set
@@ -764,53 +762,177 @@ public class ArduinoHelpers extends Common {
 
     public static void setTheEnvironmentVariables(IProject project, ICConfigurationDescription confDesc, boolean debugCompilerSettings) {
 
+	// first get all the data we need
 	IEnvironmentVariableManager envManager = CCorePlugin.getDefault().getBuildEnvironmentManager();
 	IContributedEnvironment contribEnv = envManager.getContributedEnvironment();
 
 	IPath boardFileName = new Path(Common.getBuildEnvironmentVariable(confDesc, ArduinoConst.ENV_KEY_JANTJE_BOARDS_FILE,
 		ArduinoInstancePreferences.getLastUsedBoardsFile()));
-	// TODO arduino specification makes it possible to have more than 1 platformfile lets for now assume there is only 1
-	IPath platformFilename = new Path(Common.getBuildEnvironmentVariable(confDesc, ArduinoConst.ENV_KEY_JANTJE_PLATFORM_FILE, ""));
-	if (!platformFilename.toFile().exists()) {
-	    // TODO lets for now hardcode this is arduino
-	    for (int cursegment = 0; cursegment < platformFilename.segmentCount(); cursegment++) {
-		if (ARDUINO_HARDWARE_FOLDER_NAME.equals(platformFilename.segment(cursegment))) {
+	IPath localPlatformFilename = new Path(Common.getBuildEnvironmentVariable(confDesc, ArduinoConst.ENV_KEY_JANTJE_PLATFORM_FILE, ""));
 
-		    platformFilename = getArduinoPath().append(ARDUINO_HARDWARE_FOLDER_NAME).append("arduino")
-			    .append(platformFilename.removeFirstSegments(cursegment + 2));
-		    cursegment = platformFilename.segmentCount();
-		}
-	    }
+	String boardID = Common.getBuildEnvironmentVariable(confDesc, ArduinoConst.ENV_KEY_JANTJE_BOARD_ID, "");
+	String architecture = Common.getBuildEnvironmentVariable(confDesc, ArduinoConst.ENV_KEY_JANTJE_ARCITECTURE_ID, "");
+	String packageName = Common.getBuildEnvironmentVariable(confDesc, ArduinoConst.ENV_KEY_JANTJE_PACKAGE_ID, "");
+	File anduinoIDEEnvNamesFile = Common.getArduinoIdeDumpName(packageName, architecture, boardID);
+	IPath anduinoIDEEnvNamesPath = new Path(anduinoIDEEnvNamesFile.toString());
+	architecture = architecture.toUpperCase();
+	IPath workspacePath = new Path(Common.getWorkspaceRoot().getAbsolutePath());
+	ArduinoBoards pluginPreProcessingBoardsTxt = new ArduinoBoards(workspacePath.append(ArduinoConst.PRE_PROCESSING_BOARDS_TXT).toString());
+	ArduinoBoards pluginPostProcessingBoardsTxt = new ArduinoBoards(workspacePath.append(ArduinoConst.POST_PROCESSING_BOARDS_TXT).toString());
+	IPath pluginPreProcessingPlatformTxt = new Path(workspacePath.append(ArduinoConst.PRE_PROCESSING_PLATFORM_TXT).toString());
+	IPath pluginPostProcessingPlatformTxt = new Path(workspacePath.append(ArduinoConst.POST_PROCESSING_PLATFORM_TXT).toString());
+	ArduinoBoards boardsFile = new ArduinoBoards(boardFileName.toOSString());
+	if (!(pluginPreProcessingBoardsTxt.exists() && pluginPostProcessingBoardsTxt.exists())) {
+	    Common.log(new Status(IStatus.ERROR, ArduinoConst.CORE_PLUGIN_ID, "Plugin is not properly configured. Please reconfigure plugin."));
+	    return;
 	}
-	String boardName = Common.getBuildEnvironmentVariable(confDesc, ArduinoConst.ENV_KEY_JANTJE_BOARD_NAME,
-		ArduinoInstancePreferences.getLastUsedArduinoBoardName());
+
+	// Now we have all info we can start processing
 
 	// first remove all Arduino Variables so there is no memory effect
 	RemoveAllArduinoEnvironmentVariables(contribEnv, confDesc);
 
-	// process the default env variables first. This way the platform.txt
-	// and boards.txt will
-	// overwrite the default settings
-	setTheEnvironmentVariablesSetTheDefaults(contribEnv, confDesc, platformFilename);
-	try {
-	    // process the platform.txt file first. This way the boards.txt will
-	    // overwrite the default settings
-	    setTheEnvironmentVariablesAddthePlatformTxt(contribEnv, confDesc, platformFilename);
-	    // now process the boards file
-	    setTheEnvironmentVariablesAddtheBoardsTxt(contribEnv, confDesc, boardFileName, boardName);
-	    // Do some post processing
-	    setTheEnvironmentVariablesPostProcessing(contribEnv, confDesc);
+	setTheEnvironmentVariablesSetTheDefaults(contribEnv, confDesc, localPlatformFilename);
 
-	    // If this is a debug config we modify the environment variables for compilation
-	    if (debugCompilerSettings) {
-		setTheEnvironmentVariablesModifyDebugCompilerSettings(confDesc, envManager, contribEnv);
-	    }
+	setTheEnvironmentVariablesAddAFile(contribEnv, confDesc, pluginPreProcessingPlatformTxt);
+	setTheEnvironmentVariablesAddtheBoardsTxt(contribEnv, confDesc, pluginPreProcessingBoardsTxt, boardID, true);
 
-	} catch (Exception e) {// Catch exception if any
-	    Common.log(new Status(IStatus.ERROR, ArduinoConst.CORE_PLUGIN_ID, "Error parsing " + platformFilename + " or " + boardFileName, e));
-	    return;
+	// Do some magic for the arduino:arduino stuff
+	setTheEnvironmentVariablesRedirectToOtherVendors(contribEnv, confDesc, boardsFile, boardID, architecture.toLowerCase());// TOFIX again some
+																// dirty thing
+	// process the dump file from the arduino IDE
+	if (anduinoIDEEnvNamesFile.exists()) {
+	    setTheEnvironmentVariablesAddAFile(contribEnv, confDesc, anduinoIDEEnvNamesPath);
 	}
 
+	// process the platform file that is referenced in the build.core of the boards.txt file
+	IPath referencedPlatformFilename = new Path(Common.getBuildEnvironmentVariable(confDesc,
+		ArduinoConst.ENV_KEY_JANTJE_REFERENCED_PLATFORM_FILE, ""));
+	if (referencedPlatformFilename.toFile().exists()) {
+	    setTheEnvironmentVariablesAddAFile(contribEnv, confDesc, referencedPlatformFilename);
+	}
+
+	// process the platform file next to the selected boards.txt
+	if (localPlatformFilename.toFile().exists()) {
+	    setTheEnvironmentVariablesAddAFile(contribEnv, confDesc, localPlatformFilename);
+	}
+	// now process the boards file
+	setTheEnvironmentVariablesAddtheBoardsTxt(contribEnv, confDesc, boardsFile, boardID, true);
+
+	setTheEnvironmentVariablesAddAFile(contribEnv, confDesc, pluginPostProcessingPlatformTxt);
+	setTheEnvironmentVariablesAddtheBoardsTxt(contribEnv, confDesc, pluginPostProcessingBoardsTxt, boardID, true);
+
+	// Do some coded post processing
+	setTheEnvironmentVariablesPostProcessing(contribEnv, confDesc);
+
+	// If this is a debug config we modify the environment variables for compilation
+	if (debugCompilerSettings) {
+	    setTheEnvironmentVariablesModifyDebugCompilerSettings(confDesc, envManager, contribEnv);
+	}
+
+    }
+
+    /**
+     * This method is to support the [vendor]:[value] as described in
+     * https://github.com/arduino/Arduino/wiki/Arduino-IDE-1.5-3rd-party-Hardware-specification This method parses the boards.txt file for
+     * myboard.build.core myboard.build.variant currently not supported myboard.upload.tool myboard.bootloader.tool
+     * 
+     * in case myboard.build.core is of type [vendor]:[value] PATH_VARIABLE_NAME_ARDUINO_PLATFORM is changed to the correct value in case
+     * myboard.build.variant is of type [vendor]:[value] PATH_VARIABLE_NAME_ARDUINO_PINS is changed to the correct value
+     * 
+     * this method also sets ENV_KEY_JANTJE_BUILD_CORE and ENV_KEY_JANTJE_BUILD_VARIANT to [value] of respectively myboard.build.core and
+     * myboard.build.variant
+     * 
+     * This method relies on the post processing to set A.BUILD.CORE=${ENV_KEY_JANTJE_BUILD_CORE} A.BUILD.VARIANT=${ENV_KEY_JANTJE_BUILD_VARIANT}
+     * 
+     * @param contribEnv
+     * @param confDesc
+     * @param boardsFile
+     * @param boardID
+     */
+    private static void setTheEnvironmentVariablesRedirectToOtherVendors(IContributedEnvironment contribEnv, ICConfigurationDescription confDesc,
+	    ArduinoBoards boardsFile, String boardID, String architecture) {
+	Map<String, String> boardInfo = boardsFile.getSection(boardID);
+	if (boardInfo == null) {
+	    return; // there is a problem with the board ID
+	}
+	String core = boardInfo.get("build.core");
+	String variant = boardInfo.get("build.variant");
+	if (core != null) {
+	    String coreSplit[] = core.split(":");
+	    if (coreSplit.length == 2) {
+		String vendor = coreSplit[0];
+		Common.setBuildEnvironmentVariable(contribEnv, confDesc, ENV_KEY_JANTJE_BUILD_CORE, coreSplit[1]);
+		IPath coreReference = findReferencedFolder(vendor, architecture.toLowerCase());// TODO fix this quickfix to lower which is really
+											       // dirty
+		if (coreReference == null) {
+		    Common.log(new Status(IStatus.ERROR, ArduinoConst.CORE_PLUGIN_ID, "failed to find core reference: " + core));
+		} else {
+		    Common.setBuildEnvironmentVariable(contribEnv, confDesc, ENV_KEY_build_core_path, coreReference.append(ARDUINO_CORE_FOLDER_NAME)
+			    .append(coreSplit[1]).toString());
+		    Common.setBuildEnvironmentVariable(contribEnv, confDesc, ENV_KEY_JANTJE_REFERENCED_PLATFORM_FILE,
+			    coreReference.append(PLATFORM_FILE_NAME).toString());
+		}
+	    } else {
+		Common.setBuildEnvironmentVariable(contribEnv, confDesc, ENV_KEY_JANTJE_BUILD_CORE, core);
+		Common.setBuildEnvironmentVariable(contribEnv, confDesc, ENV_KEY_JANTJE_REFERENCED_PLATFORM_FILE, "");
+	    }
+	}
+	if (variant != null) {
+	    String variantSplit[] = variant.split(":");
+	    if (variantSplit.length == 2) {
+		String vendor = variantSplit[0];
+		Common.setBuildEnvironmentVariable(contribEnv, confDesc, ENV_KEY_JANTJE_BUILD_VARIANT, variantSplit[1]);
+		IPath variantReference = findReferencedFolder(vendor, architecture);
+		if (variantReference == null) {
+		    Common.log(new Status(IStatus.ERROR, ArduinoConst.CORE_PLUGIN_ID, "failed to find variant reference: " + variant));
+		} else {
+		    Common.setBuildEnvironmentVariable(contribEnv, confDesc, ENV_KEY_build_variant_path,
+			    variantReference.append(ARDUINO_VARIANTS_FOLDER_NAME).append(variantSplit[1]).toString());
+		}
+	    } else {
+		Common.setBuildEnvironmentVariable(contribEnv, confDesc, ENV_KEY_JANTJE_BUILD_VARIANT, variant);
+	    }
+	}
+    }
+
+    /**
+     * This method looks for a referenced path. The search goes as follows ->private hardware folder ->boardsmanager folder ->installed arduino
+     * hardware folder
+     * 
+     * The first matching folder is returned if no folder is found null is returned
+     * 
+     * @param vendor
+     * @param architecture
+     * @return
+     */
+    private static IPath findReferencedFolder(String vendor, String architecture) {
+
+	Path privateHardwareFolder = new Path(getPrivateHardwarePath());
+	IPath ideHardwareFolder = getArduinoIdeHardwarePath();
+	IPath boardsManagerPackagesFolder = getArduinoBoardsManagerPackagesPath();
+	if (privateHardwareFolder.append(vendor).append(architecture).toFile().exists()) {
+	    return privateHardwareFolder.append(vendor).append(architecture);
+	}
+	if (boardsManagerPackagesFolder.append(vendor).append(ARDUINO_HARDWARE_FOLDER_NAME).append(architecture).toFile().exists()) {
+	    // need to add version
+	    IPath foundPath = boardsManagerPackagesFolder.append(vendor).append(ARDUINO_HARDWARE_FOLDER_NAME).append(architecture);
+	    String[] versions = foundPath.toFile().list();
+	    switch (versions.length) {
+	    case 0:
+		break;
+	    case 1:
+		return foundPath.append(versions[0]);
+	    default:
+		Common.log(new Status(IStatus.WARNING, ArduinoConst.CORE_PLUGIN_ID, "Multiple versions found in: " + foundPath.toString()
+			+ " taking " + versions[0]));
+		return foundPath.append(versions[0]);
+	    }
+	}
+	if (ideHardwareFolder.append(vendor).append(architecture).toFile().exists()) {
+	    return ideHardwareFolder.append(vendor).append(architecture);
+	}
+	return null;
     }
 
     /**
@@ -825,62 +947,54 @@ public class ArduinoHelpers extends Common {
 	String recipes[] = { ENV_KEY_recipe_c_o_pattern, ENV_KEY_recipe_cpp_o_pattern, ENV_KEY_recipe_S_o_pattern,
 		ENV_KEY_recipe_objcopy_hex_pattern, ENV_KEY_recipe_objcopy_eep_pattern, ENV_KEY_recipe_size_pattern, ENV_KEY_recipe_AR_pattern,
 		ENV_KEY_recipe_c_combine_pattern };
-	IEnvironmentVariable var = null;
 	for (int curRecipe = 0; curRecipe < recipes.length; curRecipe++) {
 	    String recipe = getBuildEnvironmentVariable(confDesc, recipes[curRecipe], "", false);
 
 	    String recipeParts[] = recipe.split("(\"\\$\\{A.OBJECT_FILE}\")|(\\$\\{A.OBJECT_FILES})|(\"\\$\\{A.SOURCE_FILE}\")", 3);
 	    switch (recipeParts.length) {
 	    case 0:
-		var = new EnvironmentVariable(recipes[curRecipe] + ".1", "echo no command for " + recipes[curRecipe]);
-		contribEnv.addVariable(var, confDesc);
+		Common.setBuildEnvironmentVariable(contribEnv, confDesc, recipes[curRecipe] + ".1", "echo no command for " + recipes[curRecipe]);
 		break;
 	    case 1:
-		var = new EnvironmentVariable(recipes[curRecipe] + ".1", recipeParts[0]);
-		contribEnv.addVariable(var, confDesc);
+		Common.setBuildEnvironmentVariable(contribEnv, confDesc, recipes[curRecipe] + ".1", recipeParts[0]);
 		break;
 	    case 2:
-		var = new EnvironmentVariable(recipes[curRecipe] + ".1", recipeParts[0]);
-		contribEnv.addVariable(var, confDesc);
-		var = new EnvironmentVariable(recipes[curRecipe] + ".2", recipeParts[1]);
-		contribEnv.addVariable(var, confDesc);
+		Common.setBuildEnvironmentVariable(contribEnv, confDesc, recipes[curRecipe] + ".1", recipeParts[0]);
+		Common.setBuildEnvironmentVariable(contribEnv, confDesc, recipes[curRecipe] + ".2", recipeParts[1]);
 		break;
 	    case 3:
-		var = new EnvironmentVariable(recipes[curRecipe] + ".1", recipeParts[0]);
-		contribEnv.addVariable(var, confDesc);
-		var = new EnvironmentVariable(recipes[curRecipe] + ".2", recipeParts[1]);
-		contribEnv.addVariable(var, confDesc);
-		var = new EnvironmentVariable(recipes[curRecipe] + ".3", recipeParts[2]);
-		contribEnv.addVariable(var, confDesc);
+		Common.setBuildEnvironmentVariable(contribEnv, confDesc, recipes[curRecipe] + ".1", recipeParts[0]);
+		Common.setBuildEnvironmentVariable(contribEnv, confDesc, recipes[curRecipe] + ".2", recipeParts[1]);
+		Common.setBuildEnvironmentVariable(contribEnv, confDesc, recipes[curRecipe] + ".3", recipeParts[2]);
 		break;
 	    default:
 		// this should never happen as the split is limited to 2
-
 	    }
-
 	}
-	var = new EnvironmentVariable(ArduinoConst.ENV_KEY_SOFTWARE, "ARDUINO");
-	contribEnv.addVariable(var, confDesc);
+	Common.setBuildEnvironmentVariable(contribEnv, confDesc, ArduinoConst.ENV_KEY_SOFTWARE, "ARDUINO");
+
 	String uploadProg = ArduinoInstancePreferences.getLastUsedUploadProgrammer();
 	// If the user selected a different upload protocol replace the protocol with the selected one
 	if (!uploadProg.equals(ArduinoConst.DEFAULT)) {
-	    var = new EnvironmentVariable(ArduinoConst.ENV_KEY_ARDUINO_UPLOAD_PROTOCOL, uploadProg);
-	    contribEnv.addVariable(var, confDesc);
+	    Common.setBuildEnvironmentVariable(contribEnv, confDesc, ArduinoConst.ENV_KEY_ARDUINO_UPLOAD_PROTOCOL, uploadProg);
 	}
 
 	// Arduino uses the board approach for the upload tool.
 	// as I'm not I create some special entries to work around it
-	String uploadTool = contribEnv.getVariable(ArduinoConst.ENV_KEY_upload_tool, confDesc).getValue().toUpperCase();
-	var = new EnvironmentVariable("A.CMD", makeEnvironmentVar("A.TOOLS." + uploadTool + ".CMD"));
-	contribEnv.addVariable(var, confDesc);
-	var = new EnvironmentVariable("A.PATH", makeEnvironmentVar("A.TOOLS." + uploadTool + ".PATH"));
-	contribEnv.addVariable(var, confDesc);
-	var = new EnvironmentVariable("A.CMD.PATH", makeEnvironmentVar("A.TOOLS." + uploadTool + ".CMD.PATH"));
-	contribEnv.addVariable(var, confDesc);
-	var = new EnvironmentVariable("A.CONFIG.PATH", makeEnvironmentVar("A.TOOLS." + uploadTool + ".CONFIG.PATH"));
-	contribEnv.addVariable(var, confDesc); // End of section Arduino uses
-					       // the board approach for the
-					       // upload tool.
+	try {
+	    String uploadTool = contribEnv.getVariable(ArduinoConst.ENV_KEY_upload_tool, confDesc).getValue().toUpperCase();
+	    Common.setBuildEnvironmentVariable(contribEnv, confDesc, "A.CMD", makeEnvironmentVar("A.TOOLS." + uploadTool + ".CMD"));
+	    Common.setBuildEnvironmentVariable(contribEnv, confDesc, "A.PATH", makeEnvironmentVar("A.TOOLS." + uploadTool + ".PATH"));
+	    Common.setBuildEnvironmentVariable(contribEnv, confDesc, "A.CMD.PATH", makeEnvironmentVar("A.TOOLS." + uploadTool + ".CMD.PATH"));
+	    Common.setBuildEnvironmentVariable(contribEnv, confDesc, "A.CONFIG.PATH", makeEnvironmentVar("A.TOOLS." + uploadTool + ".CONFIG.PATH"));
+	} catch (Exception e) {
+	    // ignore this exception as there is no upload tool defined.
+	}
+
+	// link build.core to jantje.build.core
+	Common.setBuildEnvironmentVariable(contribEnv, confDesc, ENV_KEY_build_core, makeEnvironmentVar(ENV_KEY_JANTJE_BUILD_CORE));
+	// link build.variant to jantje.build.variant
+	Common.setBuildEnvironmentVariable(contribEnv, confDesc, ENV_KEY_build_variant, makeEnvironmentVar(ENV_KEY_JANTJE_BUILD_VARIANT));
 
     }
 
@@ -907,14 +1021,14 @@ public class ArduinoHelpers extends Common {
 
 	original = envManager.getVariable(ENV_KEY_ARDUINO_START + "COMPILER.C.FLAGS", confDesc, true);
 	if (original != null) {
-	    replacement = new EnvironmentVariable(original.getName(), original.getValue().replace("-g", "-g2").replace("-Os", ""),
+	    replacement = new EnvironmentVariable(original.getName(), original.getValue().replace("-g ", "-g2 ").replaceFirst("-O.? ", " "),
 		    original.getOperation(), original.getDelimiter());
 	    contribEnv.addVariable(replacement, confDesc);
 	}
 
 	original = envManager.getVariable(ENV_KEY_ARDUINO_START + "COMPILER.CPP.FLAGS", confDesc, true);
 	if (original != null) {
-	    replacement = new EnvironmentVariable(original.getName(), original.getValue().replace("-g", "-g2").replace("-Os", ""),
+	    replacement = new EnvironmentVariable(original.getName(), original.getValue().replace("-g", "-g2").replaceFirst("-O.? ", " "),
 		    original.getOperation(), original.getDelimiter());
 	    contribEnv.addVariable(replacement, confDesc);
 	}
@@ -928,12 +1042,12 @@ public class ArduinoHelpers extends Common {
      *            the value string as read from the file
      * @return the string to be stored as value for the environment variable
      */
-    public static String MakeEnvironmentString(String inputString) {
+    public static String MakeEnvironmentString(String inputString, String keyPrefix) {
 	// String ret = inputString.replaceAll("-o \"\\{object_file}\"",
 	// "").replaceAll("\"\\{object_file}\"",
 	// "").replaceAll("\"\\{source_file}\"", "")
 	// .replaceAll("\\{", "\\${" + ArduinoConst.ENV_KEY_START);
-	String ret = inputString.replaceAll("\\{(?!\\{)", "\\${" + ArduinoConst.ENV_KEY_ARDUINO_START);
+	String ret = inputString.replaceAll("\\{(?!\\{)", "\\${" + keyPrefix);
 	StringBuilder sb = new StringBuilder(ret);
 	String regex = "\\{[^}]*\\}";
 	Pattern p = Pattern.compile(regex); // Create the pattern.
@@ -1026,40 +1140,26 @@ public class ArduinoHelpers extends Common {
     }
 
     /**
-     * Searches for all platform.txt files from the arduino hardware folder
-     * 
-     * @return all the platform.txt files with full path
-     */
-    public static String[] getPlatformFiles() {
-
-	File HardwareFolder = ArduinoInstancePreferences.getArduinoPath().append(ArduinoConst.ARDUINO_HARDWARE_FOLDER_NAME).toFile();
-
-	HashSet<String> Hardwarelists = new HashSet<String>();
-	searchFiles(HardwareFolder, Hardwarelists, ArduinoConst.PLATFORM_FILE_NAME, 3);
-	if (Hardwarelists.size() == 0) {
-	    Common.log(new Status(IStatus.ERROR, ArduinoConst.CORE_PLUGIN_ID, "No platform.txt files found in the arduino hardware folder", null));
-	    return null;
-	}
-
-	return Hardwarelists.toArray(new String[Hardwarelists.size()]);
-    }
-
-    /**
      * Searches for all boards.txt files from the arduino hardware folder
      * 
      * @return all the boards.txt files with full path
      */
     public static String[] getBoardsFiles() {
-	File HardwareFolder = ArduinoInstancePreferences.getArduinoPath().append(ArduinoConst.ARDUINO_HARDWARE_FOLDER_NAME).toFile();
+	File privateHardwareFolder = new File(getPrivateHardwarePath());
+	File HardwareFolder = getArduinoIdeHardwarePath().toFile();
+	File boardsManagerPackagesFolder = getArduinoBoardsManagerPackagesPath().toFile();
 
 	HashSet<String> boardFiles = new HashSet<String>();
 	searchFiles(HardwareFolder, boardFiles, ArduinoConst.BOARDS_FILE_NAME, 3);
+	searchFiles(boardsManagerPackagesFolder, boardFiles, ArduinoConst.BOARDS_FILE_NAME, 5);
+	searchFiles(privateHardwareFolder, boardFiles, ArduinoConst.BOARDS_FILE_NAME, 3);
 	if (boardFiles.size() == 0) {
-	    Common.log(new Status(IStatus.ERROR, ArduinoConst.CORE_PLUGIN_ID, "No boards.txt files found in the arduino hardware folder", null));
+	    Common.log(new Status(IStatus.ERROR, ArduinoConst.CORE_PLUGIN_ID,
+		    "No boards.txt files found in the arduino hardware folders. I looked in:\nPrivate Hardware folder = \"" + privateHardwareFolder
+			    + "\"\nHardwareFolder = \"" + HardwareFolder + "\"\nboardsManagerPackagesFolder = \"" + boardsManagerPackagesFolder
+			    + "\"", null));
 	    return null;
 	}
-	searchFiles(new File(getPrivateHardwarePath()), boardFiles, ArduinoConst.BOARDS_FILE_NAME, 3);
-
 	return boardFiles.toArray(new String[boardFiles.size()]);
 
     }
@@ -1077,11 +1177,12 @@ public class ArduinoHelpers extends Common {
 	    // command line parameter
 	    FileInputStream fstream = new FileInputStream(file);
 	    // Get the object of DataInputStream
-	    DataInputStream in = new DataInputStream(fstream);
-	    BufferedReader br = new BufferedReader(new InputStreamReader(in));
-	    String strLine = br.readLine();
-	    in.close();
-	    return strLine;
+	    try (DataInputStream in = new DataInputStream(fstream); BufferedReader br = new BufferedReader(new InputStreamReader(in));) {
+
+		String strLine = br.readLine();
+		in.close();
+		return strLine;
+	    }
 	} catch (Exception e) {// Catch exception if any
 	    System.err.println("Error: " + e.getMessage());
 	    return e.getMessage();

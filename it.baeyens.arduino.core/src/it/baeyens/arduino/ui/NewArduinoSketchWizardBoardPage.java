@@ -48,7 +48,7 @@ public class NewArduinoSketchWizardBoardPage extends WizardPage {
 	Composite composite = new Composite(parent, SWT.NULL);
 	mPageLayout.draw(composite);
 	setControl(composite);
-	mPageLayout.feedbackControl.addListener(SWT.Modify, completeListener);
+	mPageLayout.mFeedbackControl.addListener(SWT.Modify, completeListener);
 	setPageComplete(mPageLayout.isPageComplete());
     }
 
@@ -58,6 +58,18 @@ public class NewArduinoSketchWizardBoardPage extends WizardPage {
 
     public IPath getPlatformFolder() {
 	return mPageLayout.getPlatformFolder();
+    }
+
+    public String getPackage() {
+	return mPageLayout.getPackage();
+    }
+
+    public String getArchitecture() {
+	return mPageLayout.getArchitecture();
+    }
+
+    public String getBoardID() {
+	return mPageLayout.getBoardID();
     }
 
 }

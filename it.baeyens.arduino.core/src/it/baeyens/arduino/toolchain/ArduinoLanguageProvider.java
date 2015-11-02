@@ -137,6 +137,8 @@ public class ArduinoLanguageProvider extends ToolchainBuiltinSpecsDetector imple
 	// ArduinoProperties arduinoProperties = new
 	// ArduinoProperties(currentProject);
 	ICProjectDescription prjDesc = CoreModel.getDefault().getProjectDescription(currentProject);
+	if (prjDesc == null)
+	    return compilerCommand;
 
 	IEnvironmentVariableManager envManager = CCorePlugin.getDefault().getBuildEnvironmentManager();
 	// IContributedEnvironment contribEnv =
@@ -153,7 +155,11 @@ public class ArduinoLanguageProvider extends ToolchainBuiltinSpecsDetector imple
 	}
 	// End of Bug fix for CDT 8.1 fixed in 8.2
 	if (languageId.equals("org.eclipse.cdt.core.gcc")) {
-	    compilerCommand = envManager.getVariable(ArduinoConst.ENV_KEY_recipe_c_o_pattern, confDesc, true).getValue().replace(" -o ", " ");
+	    try {
+		compilerCommand = envManager.getVariable(ArduinoConst.ENV_KEY_recipe_c_o_pattern, confDesc, true).getValue().replace(" -o ", " ");
+	    } catch (Exception e) {
+		compilerCommand = "";
+	    }
 	    IEnvironmentVariable op1 = envManager.getVariable(ArduinoConst.ENV_KEY_JANTJE_ADDITIONAL_COMPILE_OPTIONS, confDesc, true);
 	    IEnvironmentVariable op2 = envManager.getVariable(ArduinoConst.ENV_KEY_JANTJE_ADDITIONAL_C_COMPILE_OPTIONS, confDesc, true);
 	    if (op1 != null) {
@@ -164,7 +170,11 @@ public class ArduinoLanguageProvider extends ToolchainBuiltinSpecsDetector imple
 	    }
 	    compilerCommand = compilerCommand + " -D__IN_ECLIPSE__=1";
 	} else if (languageId.equals("org.eclipse.cdt.core.g++")) {
-	    compilerCommand = envManager.getVariable(ArduinoConst.ENV_KEY_recipe_cpp_o_pattern, confDesc, true).getValue().replace(" -o ", " ");
+	    try {
+		compilerCommand = envManager.getVariable(ArduinoConst.ENV_KEY_recipe_cpp_o_pattern, confDesc, true).getValue().replace(" -o ", " ");
+	    } catch (Exception e) {
+		compilerCommand = "";
+	    }
 	    IEnvironmentVariable op1 = envManager.getVariable(ArduinoConst.ENV_KEY_JANTJE_ADDITIONAL_COMPILE_OPTIONS, confDesc, true);
 	    IEnvironmentVariable op2 = envManager.getVariable(ArduinoConst.ENV_KEY_JANTJE_ADDITIONAL_CPP_COMPILE_OPTIONS, confDesc, true);
 	    if (op1 != null) {
@@ -178,11 +188,12 @@ public class ArduinoLanguageProvider extends ToolchainBuiltinSpecsDetector imple
 	    ManagedBuilderCorePlugin.error("Unable to find compiler command for language " + languageId + " in toolchain=" + getToolchainId()); //$NON-NLS-1$
 	}
 
-	return compilerCommand.replaceAll("\"\"", "").replaceAll("  ", " "); // remove
-									     // ""
-									     // and
-									     // double
-									     // blanks
+	String ret = compilerCommand.replaceAll("[^\\\\]\"\"", "").replaceAll("  ", " "); // remove
+	// "" except \""
+	// and
+	// double
+	// blanks
+	return ret;
     }
 
 }

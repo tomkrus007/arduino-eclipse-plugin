@@ -40,6 +40,7 @@ public class ArduinoBoards {
     }
 
     public ArduinoBoards() {
+	// no constructor needed
     }
 
     /**
@@ -53,33 +54,6 @@ public class ArduinoBoards {
 	return mArduinoSupportedBoards.get(SectionKey);
     }
 
-    // /**
-    // * Generic method to read a value from the boards file
-    // *
-    // * @param boardName
-    // * @param Key
-    // * @return
-    // */
-    // private String getBoardSetting(String boardName, String Key, String
-    // defaultValue) {
-    // if (!mLastLoadedBoard.equals(boardName)) {
-    // mLastLoadedBoard = boardName;
-    // String mapName = getBoardIDFromName(boardName);
-    // settings = mArduinoSupportedBoards.get(mapName);
-    // }
-    //
-    // if (settings != null) {
-    // String TagContent = settings.get(Key);
-    // if (TagContent != null)
-    // return TagContent;
-    // } else {
-    // IStatus status = new Status(IStatus.ERROR, ArduinoConst.CORE_PLUGIN_ID,
-    // "Settings in ArduinoBoards is null. This should never happen.", null);
-    // Common.log(status);
-    // }
-    // return defaultValue;
-    // }
-
     /**
      * Get all the options in the boards.txt file
      * 
@@ -90,8 +64,11 @@ public class ArduinoBoards {
 	for (Entry<String, Map<String, String>> entry : mArduinoSupportedBoards.entrySet()) {
 	    if (entry.getKey().equals("menu")) {
 		for (Entry<String, String> e2 : entry.getValue().entrySet()) {
-		    if (!e2.getKey().contains("."))
-			ret.add(e2.getValue());
+		    if (!e2.getKey().contains(".")) {
+			if (!ret.contains(e2.getValue())) {
+			    ret.add(e2.getValue());
+			}
+		    }
 		}
 	    }
 	}
@@ -112,6 +89,9 @@ public class ArduinoBoards {
 	String boardID = getBoardIDFromName(boardName);
 	HashSet<String> ret = new HashSet<String>();
 	Map<String, String> menuInfo = mArduinoSupportedBoards.get("menu");
+	if (menuInfo == null) {
+	    return new String[0];
+	}
 	for (Entry<String, String> e2 : menuInfo.entrySet()) {
 	    if (e2.getValue().equals(menuLabel))
 		menuID = e2.getKey();
@@ -137,76 +117,6 @@ public class ArduinoBoards {
 	return ret.toArray(new String[ret.size()]);
     }
 
-    //
-    // /**
-    // * getMCUName returns the mcu name for a given board. <br/>
-    // * This function assumes (and does not test so will fail) that the board
-    // file has been loaded
-    // *
-    // * @param boardName
-    // * the board name for which the mcu name will be returned
-    // * @return the MCU name
-    // * @author Jan Baeyens
-    // */
-    // public String getMCUName(String boardName) {
-    // return getBoardSetting(boardName, ArduinoConst.ProcessorTypeKeyTAG, "");
-    // }
-    //
-    // /**
-    // * getMCUFrequency returns the mcu frequency for a given board. <br/>
-    // * This function assumes (and does not test so will fail) that the board
-    // file has been loaded
-    // *
-    // * @param boardName
-    // * the board name for which the mcu frequency will be returned
-    // * @return the MCU frequency
-    // * @author Jan Baeyens
-    // */
-    // public String getMCUFrequency(String boardName) {
-    // return getBoardSetting(boardName, ArduinoConst.FrequencyKeyTAG,
-    // "").replaceFirst("L", " ").trim();
-    // }
-    //
-    // /**
-    // * returns the variant of the arduino board<br/>
-    // * This function assumes (and does not test so will fail) that the board
-    // file has been loaded
-    // *
-    // * @param boardName
-    // * the board name for which the board variant will be returned
-    // * @return the Arduino board variant
-    // * @author Jan Baeyens
-    // */
-    // public String getBoardVariant(String boardName) {
-    // return getBoardSetting(boardName, ArduinoConst.BoardVariantTAG, "");
-    // }
-    //
-    // /**
-    // * getDisableFlushing returns the disable flushing flag for a given board.
-    // <br/>
-    // * This function assumes (and does not test so will fail) that the board
-    // file has been loaded. This function is currently unused
-    // *
-    // * @param boardName
-    // * the board name for which the disable flushing flag will be returned
-    // * @return disable flushing flag
-    // * @author Jan Baeyens
-    // */
-    // public boolean getDisableFlushing(String boardName) {
-    // return getBoardSetting(boardName, ArduinoConst.disableFlushingKeyTAG,
-    // "").equalsIgnoreCase("TRUE");
-    // }
-    //
-    // public String getUploadTool(String boardName) {
-    // return getBoardSetting(boardName, ArduinoConst.UploadToolTAG,
-    // ArduinoConst.UploadToolDefault);
-    // }
-    //
-    // public String getBuildCoreFolder(String boardName) {
-    // return getBoardSetting(boardName, ArduinoConst.BoardBuildCoreFolder,
-    // ArduinoConst.BoardBuildCoreFolderdefault);
-    //
-    // }
     /**
      * GetArduinoBoards returns all the boards that are in the currently loaded board.txt file.
      * 
@@ -252,6 +162,10 @@ public class ArduinoBoards {
 	    return true; // do nothing when value didn't change
 	mLastLoadedBoardsFile = new File(boardsFile);
 	return LoadBoardsFile();
+    }
+
+    public boolean exists() {
+	return mLastLoadedBoardsFile.exists();
     }
 
     /**
@@ -313,21 +227,22 @@ public class ArduinoBoards {
      *             when something goes wrong??
      */
     static public void load(File inputFile, Map<String, String> table) throws IOException {
-	FileInputStream input = new FileInputStream(inputFile);
-	String[] lines = loadStrings(input); // Reads as UTF-8
-	for (String line : lines) {
-	    if ((line.length() == 0) || (line.charAt(0) == '#'))
-		continue;
+	try (FileInputStream input = new FileInputStream(inputFile);) {
+	    String[] lines = loadStrings(input); // Reads as UTF-8
+	    for (String line : lines) {
+		if ((line.length() == 0) || (line.charAt(0) == '#'))
+		    continue;
 
-	    // this won't properly handle = signs being in the text
-	    int equals = line.indexOf('=');
-	    if (equals != -1) {
-		String key = line.substring(0, equals).trim();
-		String value = line.substring(equals + 1).trim();
-		table.put(key, value);
+		// this won't properly handle = signs being in the text
+		int equals = line.indexOf('=');
+		if (equals != -1) {
+		    String key = line.substring(0, equals).trim();
+		    String value = line.substring(equals + 1).trim();
+		    table.put(key, value);
+		}
 	    }
+	    input.close();
 	}
-	input.close();
     }
 
     // Taken from PApplet.java
@@ -340,20 +255,21 @@ public class ArduinoBoards {
      */
     static public String[] loadStrings(InputStream input) {
 	try {
-	    BufferedReader reader = new BufferedReader(new InputStreamReader(input, "UTF-8"));
-
 	    String lines[] = new String[100];
 	    int lineCount = 0;
-	    String line = null;
-	    while ((line = reader.readLine()) != null) {
-		if (lineCount == lines.length) {
-		    String temp[] = new String[lineCount << 1];
-		    System.arraycopy(lines, 0, temp, 0, lineCount);
-		    lines = temp;
+	    try (BufferedReader reader = new BufferedReader(new InputStreamReader(input, "UTF-8"));) {
+
+		String line = null;
+		while ((line = reader.readLine()) != null) {
+		    if (lineCount == lines.length) {
+			String temp[] = new String[lineCount << 1];
+			System.arraycopy(lines, 0, temp, 0, lineCount);
+			lines = temp;
+		    }
+		    lines[lineCount++] = line;
 		}
-		lines[lineCount++] = line;
+		reader.close();
 	    }
-	    reader.close();
 
 	    if (lineCount == lines.length) {
 		return lines;

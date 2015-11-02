@@ -3,14 +3,19 @@ package it.baeyens.arduino.ui;
 import it.baeyens.arduino.common.ArduinoConst;
 import it.baeyens.arduino.common.ArduinoInstancePreferences;
 import it.baeyens.arduino.common.Common;
+import it.baeyens.arduino.ide.connector.ArduinoGetPreferences;
 import it.baeyens.arduino.tools.ArduinoHelpers;
 import it.baeyens.arduino.tools.MyDirectoryFieldEditor;
 
 import java.awt.Desktop;
 import java.io.File;
+import java.io.FileOutputStream;
 import java.io.IOException;
+import java.io.InputStream;
+import java.net.MalformedURLException;
 import java.net.URI;
 import java.net.URISyntaxException;
+import java.net.URL;
 
 import org.eclipse.core.filesystem.URIUtil;
 import org.eclipse.core.resources.IPathVariableManager;
@@ -20,9 +25,11 @@ import org.eclipse.core.runtime.CoreException;
 import org.eclipse.core.runtime.IPath;
 import org.eclipse.core.runtime.IStatus;
 import org.eclipse.core.runtime.Path;
+import org.eclipse.core.runtime.Platform;
 import org.eclipse.core.runtime.Status;
 import org.eclipse.core.runtime.preferences.InstanceScope;
 import org.eclipse.jface.dialogs.Dialog;
+import org.eclipse.jface.preference.ComboFieldEditor;
 import org.eclipse.jface.preference.DirectoryFieldEditor;
 import org.eclipse.jface.preference.FieldEditorPreferencePage;
 import org.eclipse.jface.preference.StringFieldEditor;
@@ -49,6 +56,7 @@ public class ArduinoPreferencePage extends FieldEditorPreferencePage implements 
     private MyDirectoryFieldEditor mArduinoIdePath;
     private DirectoryFieldEditor mArduinoPrivateLibPath;
     private DirectoryFieldEditor mArduinoPrivateHardwarePath;
+    private ComboFieldEditor mArduinoBuildBeforeUploadOption;
     private boolean mIsDirty = false;
     private IPath mPrefBoardFile = null;
 
@@ -84,7 +92,7 @@ public class ArduinoPreferencePage extends FieldEditorPreferencePage implements 
     private boolean showError(String dialogMessage) {
 	String FullDialogMessage = dialogMessage + "\nPlease see <http://eclipse.baeyens.it/installAdvice.shtml> for more info.\n";
 	FullDialogMessage = FullDialogMessage
-		+ "Yes continue and ignore the warning\nNo do not continue and open install advice in browser\ncancel do not continue";
+		+ "\n\nYes:    continue and ignore the warning\nNo:     do not continue and open install advice in browser\ncancel: do not continue";
 	MessageBox dialog = new MessageBox(getShell(), SWT.ICON_QUESTION | SWT.YES | SWT.CANCEL | SWT.NO);
 	dialog.setText("Considerations about Arduino IDE compatibility");
 	dialog.setMessage(FullDialogMessage);
@@ -131,50 +139,147 @@ public class ArduinoPreferencePage extends FieldEditorPreferencePage implements 
      */
     @Override
     public boolean performOk() {
-	if (!testStatus())
-	    return false;
-	if (!mIsDirty)
+	if (!mIsDirty) {
 	    return true;
-
+	}
+	if (!testStatus()) {
+	    return false;
+	}
 	if (mArduinoIdeVersion.getStringValue().compareTo("1.5.0") < 0) {
 	    showError("This plugin is for Arduino IDE 1.5.x. \nPlease use V1 of the plugin for earlier versions.");
 	    return false;
 	}
-	if (mArduinoIdeVersion.getStringValue().equals("1.5.3") || mArduinoIdeVersion.getStringValue().equals("1.5.4")) {
-	    if (!showError("Arduino IDE 1.5.3 and 1.5.4 are not supported."))
-		return false;
+	String infoMessage = null;
+	boolean addMake = true;
+	switch (mArduinoIdeVersion.getStringValue()) {
+	case "1.5.0":
+	case "1.5.1":
+	case "1.5.2":
+	case "1.5.3":
+	case "1.5.4":
+	    infoMessage = "Arduino IDE " + mArduinoIdeVersion.getStringValue() + " is not supported.";
+	    addMake = false;
+	    break;
+	case "1.5.5":
+	case "1.5.6":
+	case "1.5.6-r2":
+	    infoMessage = "Arduino IDE " + mArduinoIdeVersion.getStringValue() + " works but you need to adapt some libraries. Not Advised";
+	    addMake = false;
+	    break;
+	case "1.5.7":
+	case "1.5.8":
+	case "1.6.0":
+	    if (Platform.getOS().equals(Platform.OS_WIN32)) {
+		infoMessage = "Arduino IDE " + mArduinoIdeVersion.getStringValue() + " Has serious issues on windows. THIS IS NOT SUPPORTED!!!!";
+	    } else {
+		infoMessage = "Arduino IDE " + mArduinoIdeVersion.getStringValue() + " works.";
+	    }
+	    break;
+	case "1.6.1":
+	    infoMessage = "Arduino IDE " + mArduinoIdeVersion.getStringValue() + " works great.";
+	    break;
+	case "1.6.2":
+	case "1.6.3":
+	case "1.6.4":
+	    infoMessage = "Arduino IDE " + mArduinoIdeVersion.getStringValue() + " only works with Teensy.";
+	    break;
+	case "1.6.5":
+	    infoMessage = "Arduino IDE " + mArduinoIdeVersion.getStringValue() + " works great.";
+	    break;
+	default:
+	    infoMessage = "You are using a version of the Arduino IDE that is unknow or newer than available at the release of this plugin.";
+	    infoMessage += "\nIf it is a newer version please feed back usage results to Jantje.";
 	}
-	if (mArduinoIdeVersion.getStringValue().equals("1.5.5")) {
-	    if (!showError("Arduino IDE 1.5.5 works but you need to adapt some libraries."))
-		return false;
-	}
-	if (mArduinoIdeVersion.getStringValue().equals("1.5.6")) {
-	    if (!showError("Arduino IDE 1.5.6 works but you need to adapt some libraries."))
-		return false;
-	}
-	if (mArduinoIdeVersion.getStringValue().equals("1.5.6-r2")) {
-	    if (!showError("Arduino IDE 1.5.6R2 works but you need to adapt some libraries."))
-		return false;
-	}
+	if (addMake) {
+	    infoMessage += "\nRemember to add your own make as it is no longer delivered with arduino.";
 
-	if (mArduinoIdeVersion.getStringValue().equals("1.5.7")) {
-	    if (!showError("Arduino IDE 1.5.7 works but you need to add your own make as it is no longer delivered with arduino."))
-		return false;
 	}
-
-	if (mArduinoIdeVersion.getStringValue().compareTo("1.5.7") > 0) {
-	    if (!showError("You are using a version of the Arduino IDE that is newer than available at the release of this plugin."))
-		return false;
+	infoMessage += "\nAdvised version is 1.6.5";
+	if (!showError(infoMessage)) {
+	    return false;
 	}
 
 	super.performOk();
+	mArduinoIdeVersion.store();
+	makeOurOwnCustomBoards_txt();
+	ArduinoGetPreferences.updateArduinoEnvironmentVariablesForAllProjectsIfNeeded();
 	setWorkSpacePathVariables();
+
 	// reset the previous selected values
 	ArduinoInstancePreferences.SetLastUsedArduinoBoard("");
 	ArduinoInstancePreferences.SetLastUsedUploadPort("");
 	ArduinoInstancePreferences.setLastUsedBoardsFile("");
 	ArduinoInstancePreferences.setLastUsedMenuOption("");
 	return true;
+    }
+
+    /**
+     * To be capable of overwriting the boards.txt and platform.txt file settings the plugin contains its own settings. The settings are arduino IDE
+     * version specific and it seems to be relatively difficult to read a boards.txt located in the plugin itself (so outside of the workspace)
+     * Therefore I copy the file during plugin configuration to the workspace root. The file is arduino IDE specific. If no specific file is found the
+     * default is used. There are actually 4 txt files. 2 are for pre-processing 2 are for post processing. each time 1 board.txt an platform.txt I
+     * probably do not need all of them but as I'm setting up this framework it seems best to add all possible combinations.
+     * 
+     */
+    private void makeOurOwnCustomBoards_txt() {
+	// TODO think about the A. and JANTJE. Maybe we do not want to add them automatically
+	// Actually I can not cleanup JANTJE properly so I can't do this
+	IPath workspacePath = new Path(Common.getWorkspaceRoot().getAbsolutePath());
+	makeOurOwnCustomBoard_txt("config/pre_processing_boards_-.txt", workspacePath.append(ArduinoConst.PRE_PROCESSING_BOARDS_TXT));
+	makeOurOwnCustomBoard_txt("config/post_processing_boards_-.txt", workspacePath.append(ArduinoConst.POST_PROCESSING_BOARDS_TXT));
+	makeOurOwnCustomBoard_txt("config/pre_processing_platform_-.txt", workspacePath.append(ArduinoConst.PRE_PROCESSING_PLATFORM_TXT));
+	makeOurOwnCustomBoard_txt("config/post_processing_platform_-.txt", workspacePath.append(ArduinoConst.POST_PROCESSING_PLATFORM_TXT));
+    }
+
+    /**
+     * This method creates a file in the root of the workspace based on a file delivered with the plugin The file can be arduino IDE version specific.
+     * If no specific version is found the default is used.
+     * 
+     * @param inRegEx
+     *            a string used to search for the version specific file. The $ is replaced by the arduino version or default
+     * @param outFile
+     *            the name of the file that will be created in the root of the workspace
+     */
+    private void makeOurOwnCustomBoard_txt(String inRegEx, IPath outFile) {
+	String VersionSpecificFile = inRegEx.replaceFirst("-", mArduinoIdeVersion.getStringValue());
+	String DefaultFile = inRegEx.replaceFirst("-", "default");
+	/*
+	 * Finding the file in the plugin as described here :http://blog.vogella.com/2010/07/06/reading-resources-from-plugin/
+	 */
+
+	byte[] buffer = new byte[4096]; // To hold file contents
+	int bytes_read; // How many bytes in buffer
+
+	try (FileOutputStream to = new FileOutputStream(outFile.toString());) {
+	    try {
+		URL specificUrl = new URL("platform:/plugin/it.baeyens.arduino.core/" + VersionSpecificFile);
+		URL defaultUrl = new URL("platform:/plugin/it.baeyens.arduino.core/" + DefaultFile);
+
+		try (InputStream inputStreamSpecific = specificUrl.openConnection().getInputStream();) {
+		    while ((bytes_read = inputStreamSpecific.read(buffer)) != -1) {
+			to.write(buffer, 0, bytes_read); // write
+		    }
+		} catch (IOException e) {
+		    try (InputStream inputStreamDefault = defaultUrl.openConnection().getInputStream();) {
+			while ((bytes_read = inputStreamDefault.read(buffer)) != -1) {
+			    to.write(buffer, 0, bytes_read); // write
+			}
+		    } catch (IOException e1) {
+			// TODO Auto-generated catch block
+			e1.printStackTrace();
+			return;
+		    }
+		    return;
+		}
+	    } catch (MalformedURLException e1) {
+		// TODO Auto-generated catch block
+		e1.printStackTrace();
+	    }
+	} catch (IOException e2) {
+	    // TODO Auto-generated catch block
+	    e2.printStackTrace();
+	} // Create output stream
+
     }
 
     /**
@@ -196,6 +301,8 @@ public class ArduinoPreferencePage extends FieldEditorPreferencePage implements 
 	    pathMan.setURIValue(ArduinoConst.WORKSPACE_PATH_VARIABLE_NAME_ARDUINO_LIB,
 		    URIUtil.toURI(ArduinoIDEPath.append(ArduinoConst.LIBRARY_PATH_SUFFIX).toString()));
 	    pathMan.setURIValue(ArduinoConst.WORKSPACE_PATH_VARIABLE_NAME_PRIVATE_LIB, URIUtil.toURI(mArduinoPrivateLibPath.getStringValue()));
+	    // the line below is added because eclipse seems to keep on using the old value.
+	    pathMan.setURIValue("ArduinoPivateLibPath", URIUtil.toURI(mArduinoPrivateLibPath.getStringValue()));
 	    pathMan.setURIValue(ArduinoConst.WORKSPACE_PATH_VARIABLE_NAME_ARDUINO, URIUtil.toURI(ArduinoIDEPath));
 	} catch (CoreException e) {
 	    Common.log(new Status(IStatus.ERROR, ArduinoConst.CORE_PLUGIN_ID,
@@ -246,6 +353,11 @@ public class ArduinoPreferencePage extends FieldEditorPreferencePage implements 
 	addField(mArduinoIdeVersion);
 	mArduinoIdeVersion.setEnabled(false, parent);
 
+	String[][] buildBeforeUploadOptions = new String[][] { { "Ask every upload", "ASK" }, { "Yes", "YES" }, { "No", "NO" } };
+	mArduinoBuildBeforeUploadOption = new ComboFieldEditor(ArduinoConst.KEY_BUILD_BEFORE_UPLOAD_OPTION, "Build before upload?",
+		buildBeforeUploadOptions, parent);
+	addField(mArduinoBuildBeforeUploadOption);
+
     }
 
     /**
@@ -266,7 +378,7 @@ public class ArduinoPreferencePage extends FieldEditorPreferencePage implements 
 	File arduinoBoardFile = arduinoFolder.append(ArduinoConst.LIB_VERSION_FILE).toFile();
 	boolean isArduinoFolderValid = arduinoBoardFile.canRead();
 	if (isArduinoFolderValid) {
-	    IPath BoardFile= Common.getArduinoIDEPathFromUserSelection(mArduinoIdePath.getStringValue());
+	    IPath BoardFile = Common.getArduinoIDEPathFromUserSelection(mArduinoIdePath.getStringValue());
 	    if (!BoardFile.equals(mPrefBoardFile)) {
 		mPrefBoardFile = BoardFile;
 		mArduinoIdeVersion.setStringValue(ArduinoHelpers.GetIDEVersion(BoardFile));
@@ -293,6 +405,12 @@ public class ArduinoPreferencePage extends FieldEditorPreferencePage implements 
 	setErrorMessage(ErrorMessage);
 	setValid(false);
 	return false;
+    }
+
+    @Override
+    protected void performApply() {
+	mIsDirty = true;
+	super.performApply();
     }
 
 }
